@@ -2,6 +2,8 @@
 #include <WebServer.h>
 #include <Wire.h>
 #include <SPI.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
 #include <Adafruit_BMP280.h>
@@ -10,18 +12,25 @@
 // =========================
 // Wi-Fi Credentials
 // =========================
-const char* ssid = "YOUR_WIFI_NAME";
-const char* password = "YOUR_WIFI_PASSWORD";
+const char* ssid = "MSI_25H";
+const char* password = "50A5DC8209FF";
+
+// =========================
+// MQTT Settings
+// =========================
+const char* mqtt_server = "192.168.10.111";   // replace with your PC IP or broker IP
+const int mqtt_port = 1883;
+const char* mqtt_pub_topic = "weatherstation/data";
+const char* mqtt_sub_topic = "weatherstation/test";
+const char* device_id = "ESP32_01";
 
 // =========================
 // Pin Definitions
 // =========================
 #define DHTPIN   4
 #define DHTTYPE  DHT22
+#define SOIL_PIN 34
 
-#define SOIL_PIN 34   // ADC1 pin, safe with Wi-Fi
-
-// TFT Display (ILI9341 SPI)
 #define TFT_CS   5
 #define TFT_DC   27
 #define TFT_RST  33
@@ -30,15 +39,17 @@ const char* password = "YOUR_WIFI_PASSWORD";
 #define TFT_MISO 19
 #define TFT_LED  32
 
-// I2C for BMP280
 #define I2C_SDA  21
 #define I2C_SCL  22
 
 // =========================
 // Objects
 // =========================
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
+
 DHT dht(DHTPIN, DHTTYPE);
-Adafruit_BMP280 bmp; // I2C
+Adafruit_BMP280 bmp;
 Adafruit_ILI9341 tft(TFT_CS, TFT_DC, TFT_RST);
 WebServer server(80);
 
@@ -64,22 +75,28 @@ bool dhtOk = false;
 bool bmpOk = false;
 
 unsigned long lastSensorRead = 0;
-const unsigned long readInterval = 3000; // 3 seconds
+unsigned long lastMqttPublish = 0;
 
-// Soil calibration values
-// Adjust after testing your sensor
-const int SOIL_DRY = 3200;   // dry soil raw value
-const int SOIL_WET = 1400;   // wet soil raw value
+const unsigned long readInterval = 3000;
+const unsigned long publishInterval = 5000;
 
-// Sea-level pressure for altitude estimate
+const int SOIL_DRY = 3200;
+const int SOIL_WET = 1100;
 const float SEA_LEVEL_HPA = 1013.25;
+
+bool mqttAvailable = false;
+unsigned long lastMqttReconnectAttempt = 0;
+const unsigned long mqttReconnectInterval = 5000; // try every 5 seconds
 
 // =========================
 // Function Prototypes
 // =========================
 void connectWiFi();
+bool reconnectMQTT();
+void mqttCallback(char* topic, byte* payload, unsigned int length);
 void setupWebServer();
 void readSensors();
+void publishSensorData();
 void drawDashboard();
 String getHTMLPage();
 
@@ -104,16 +121,14 @@ void setup() {
   digitalWrite(TFT_LED, HIGH);
 
   Wire.begin(I2C_SDA, I2C_SCL);
-
   dht.begin();
 
   SPI.begin(TFT_CLK, TFT_MISO, TFT_MOSI, TFT_CS);
   tft.begin();
-  tft.setRotation(1); // landscape
+  tft.setRotation(1);
 
   showStartupScreen("Weather Station", "Initializing...", ILI9341_CYAN);
 
-  // BMP280 init
   if (bmp.begin(0x76)) {
     bmpOk = true;
     Serial.println("BMP280 found at 0x76");
@@ -136,6 +151,10 @@ void setup() {
   }
 
   connectWiFi();
+
+  mqttClient.setServer(mqtt_server, mqtt_port);
+  mqttClient.setCallback(mqttCallback);
+
   setupWebServer();
 
   readSensors();
@@ -146,17 +165,46 @@ void setup() {
 // Main Loop
 // =========================
 void loop() {
+  // Keep web server running
   server.handleClient();
 
+  // Keep Wi-Fi alive
+  if (WiFi.status() != WL_CONNECTED) {
+    connectWiFi();
+  }
+
+  // MQTT should NOT block the rest of the system
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!mqttClient.connected()) {
+      unsigned long now = millis();
+      if (now - lastMqttReconnectAttempt >= mqttReconnectInterval) {
+        lastMqttReconnectAttempt = now;
+        reconnectMQTT();
+      }
+    } else {
+      mqttClient.loop();
+      mqttAvailable = true;
+    }
+  } else {
+    mqttAvailable = false;
+  }
+
+  // Sensor reading and TFT update must continue no matter what
   if (millis() - lastSensorRead >= readInterval) {
     lastSensorRead = millis();
     readSensors();
     drawDashboard();
   }
+
+  // Publish only if MQTT is available
+  if (mqttAvailable && millis() - lastMqttPublish >= publishInterval) {
+    lastMqttPublish = millis();
+    publishSensorData();
+  }
 }
 
 // =========================
-// Wi-Fi Connection
+// Wi-Fi
 // =========================
 void connectWiFi() {
   WiFi.mode(WIFI_STA);
@@ -178,36 +226,76 @@ void connectWiFi() {
     Serial.println("Wi-Fi connected");
     Serial.print("IP Address: ");
     Serial.println(WiFi.localIP());
-
-    tft.fillScreen(ILI9341_BLACK);
-    tft.fillRect(0, 0, 320, 40, ILI9341_GREEN);
-    tft.setTextColor(ILI9341_WHITE, ILI9341_GREEN);
-    tft.setTextSize(2);
-    tft.setCursor(50, 12);
-    tft.print("Wi-Fi Connected");
-
-    tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
-    tft.setTextSize(2);
-    tft.setCursor(20, 80);
-    tft.print("IP Address:");
-    tft.setCursor(20, 110);
-    tft.print(WiFi.localIP());
-
-    delay(1800);
   } else {
     Serial.println("Wi-Fi connection failed");
+  }
+}
 
-    tft.fillScreen(ILI9341_BLACK);
-    tft.fillRect(0, 0, 320, 40, ILI9341_RED);
-    tft.setTextColor(ILI9341_WHITE, ILI9341_RED);
-    tft.setTextSize(2);
-    tft.setCursor(70, 12);
-    tft.print("Wi-Fi Failed");
+// =========================
+// MQTT
+// =========================
+bool reconnectMQTT() {
+  Serial.print("Attempting MQTT connection...");
 
-    tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
-    tft.setCursor(20, 80);
-    tft.print("Running offline mode");
-    delay(1800);
+  String clientId = "ESP32Client-";
+  clientId += String(random(0xffff), HEX);
+
+  if (mqttClient.connect(clientId.c_str())) {
+    Serial.println("connected");
+    mqttClient.subscribe(mqtt_sub_topic);
+    Serial.print("Subscribed to: ");
+    Serial.println(mqtt_sub_topic);
+    mqttAvailable = true;
+    return true;
+  } else {
+    Serial.print("failed, rc=");
+    Serial.println(mqttClient.state());
+    mqttAvailable = false;
+    return false;
+  }
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String message;
+
+  for (unsigned int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+
+  Serial.print("Message received on topic ");
+  Serial.print(topic);
+  Serial.print(": ");
+  Serial.println(message);
+}
+
+void publishSensorData() {
+  if (!mqttClient.connected()) {
+    mqttAvailable = false;
+    return;
+  }
+
+  StaticJsonDocument<256> doc;
+
+  doc["device_id"] = device_id;
+  doc["temperature"] = temperature;
+  doc["humidity"] = humidity;
+  doc["pressure"] = pressure_hPa;
+  doc["soil_moisture"] = soilPercent;
+  doc["soil_raw"] = soilRaw;
+  doc["heat_index"] = heatIndexC;
+  doc["altitude"] = altitudeM;
+  doc["timestamp"] = millis();
+
+  char buffer[256];
+  serializeJson(doc, buffer);
+
+  if (mqttClient.publish(mqtt_pub_topic, buffer)) {
+    Serial.println("MQTT publish successful");
+    Serial.println(buffer);
+    mqttAvailable = true;
+  } else {
+    Serial.println("MQTT publish failed");
+    mqttAvailable = false;
   }
 }
 
@@ -219,37 +307,20 @@ void setupWebServer() {
     server.send(200, "text/html", getHTMLPage());
   });
 
-  server.on("/data", []() {
-    String json = "{";
-    json += "\"temperature\":" + String(temperature, 1) + ",";
-    json += "\"humidity\":" + String(humidity, 1) + ",";
-    json += "\"heatIndex\":" + String(heatIndexC, 1) + ",";
-    json += "\"pressure\":" + String(pressure_hPa, 1) + ",";
-    json += "\"altitude\":" + String(altitudeM, 1) + ",";
-    json += "\"soilRaw\":" + String(soilRaw) + ",";
-    json += "\"soilPercent\":" + String(soilPercent, 1) + ",";
-    json += "\"dhtOk\":" + String(dhtOk ? "true" : "false") + ",";
-    json += "\"bmpOk\":" + String(bmpOk ? "true" : "false");
-    json += "}";
-    server.send(200, "application/json", json);
-  });
-
   server.begin();
-  Serial.println("Web server started");
 }
 
 // =========================
-// Read Sensors
+// Sensor Reading
 // =========================
 void readSensors() {
-  // DHT22
   float t = dht.readTemperature();
   float h = dht.readHumidity();
 
   if (!isnan(t) && !isnan(h)) {
     temperature = t;
     humidity = h;
-    heatIndexC = dht.computeHeatIndex(t, h, false); // Celsius
+    heatIndexC = dht.computeHeatIndex(t, h, false);
     lastValidTemp = temperature;
     lastValidHum = humidity;
     lastValidHeatIndexC = heatIndexC;
@@ -259,12 +330,10 @@ void readSensors() {
     humidity = lastValidHum;
     heatIndexC = lastValidHeatIndexC;
     dhtOk = false;
-    Serial.println("DHT22 read failed");
   }
 
-  // BMP280
   if (bmpOk) {
-    float p = bmp.readPressure() / 100.0F; // Pa to hPa
+    float p = bmp.readPressure() / 100.0F;
     float alt = bmp.readAltitude(SEA_LEVEL_HPA);
 
     if (!isnan(p) && p > 300.0 && p < 1200.0) {
@@ -275,14 +344,12 @@ void readSensors() {
     } else {
       pressure_hPa = lastValidPressure;
       altitudeM = lastValidAltitudeM;
-      Serial.println("BMP280 reading invalid");
     }
   } else {
     pressure_hPa = lastValidPressure;
     altitudeM = lastValidAltitudeM;
   }
 
-  // Soil sensor
   soilRaw = analogRead(SOIL_PIN);
 
   float mapped = map(soilRaw, SOIL_DRY, SOIL_WET, 0, 100);
@@ -291,41 +358,10 @@ void readSensors() {
 
   soilPercent = mapped;
   lastValidSoilPercent = soilPercent;
-
-  // Serial output
-  Serial.println("----------- Sensor Data -----------");
-  Serial.print("Temperature: ");
-  Serial.print(temperature);
-  Serial.println(" C");
-
-  Serial.print("Humidity: ");
-  Serial.print(humidity);
-  Serial.println(" %");
-
-  Serial.print("Heat Index: ");
-  Serial.print(heatIndexC);
-  Serial.println(" C");
-
-  Serial.print("Pressure: ");
-  Serial.print(pressure_hPa);
-  Serial.println(" hPa");
-
-  Serial.print("Altitude: ");
-  Serial.print(altitudeM);
-  Serial.println(" m");
-
-  Serial.print("Soil Raw: ");
-  Serial.println(soilRaw);
-
-  Serial.print("Soil Moisture: ");
-  Serial.print(soilPercent);
-  Serial.println(" %");
-
-  Serial.println("-----------------------------------");
 }
 
 // =========================
-// Dashboard Drawing
+// TFT Dashboard
 // =========================
 void drawDashboard() {
   tft.fillScreen(ILI9341_BLACK);
@@ -337,14 +373,12 @@ void drawDashboard() {
   String presText = bmpOk ? String(pressure_hPa, 1) : "ERR";
   String soilText = String((int)soilPercent);
 
-  // Top row
-  drawBox(10, 40, 145, 72, ILI9341_RED,   "Temp",  tempText, "C");
+  drawBox(10, 40, 145, 72, ILI9341_RED, "Temp", tempText, "C");
   drawThermometerIcon(130, 54, ILI9341_RED);
 
-  drawBox(165, 40, 145, 72, ILI9341_CYAN, "Hum",   humText,  "%");
+  drawBox(165, 40, 145, 72, ILI9341_CYAN, "Hum", humText, "%");
   drawDropIcon(285, 60, ILI9341_CYAN);
 
-  // Bottom row
   drawBox(10, 118, 145, 72, ILI9341_YELLOW, "Press", presText, "hPa");
   drawPressureIcon(130, 140, ILI9341_YELLOW);
 
@@ -352,7 +386,6 @@ void drawDashboard() {
   drawLeafIcon(285, 140, ILI9341_GREEN);
   drawSoilBar(178, 172, 118, 10, soilPercent);
 
-  // Extra info line
   tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
   tft.setTextSize(1);
 
@@ -384,18 +417,15 @@ void drawHeader() {
 void drawStatusBar() {
   tft.fillRect(0, 220, 320, 20, ILI9341_DARKCYAN);
   tft.setTextSize(1);
+  tft.setTextColor(ILI9341_WHITE, ILI9341_DARKCYAN);
+  tft.setCursor(8, 226);
 
-  if (WiFi.status() == WL_CONNECTED) {
-    tft.fillCircle(8, 230, 4, ILI9341_GREEN);
-    tft.setTextColor(ILI9341_WHITE, ILI9341_DARKCYAN);
-    tft.setCursor(18, 226);
-    tft.print("WiFi Connected ");
-    tft.print(WiFi.localIP());
+  if (WiFi.status() == WL_CONNECTED && mqttAvailable) {
+    tft.print("WiFi OK | MQTT OK");
+  } else if (WiFi.status() == WL_CONNECTED && !mqttAvailable) {
+    tft.print("WiFi OK | MQTT OFF");
   } else {
-    tft.fillCircle(8, 230, 4, ILI9341_RED);
-    tft.setTextColor(ILI9341_WHITE, ILI9341_DARKCYAN);
-    tft.setCursor(18, 226);
-    tft.print("WiFi Not Connected");
+    tft.print("Offline");
   }
 }
 
@@ -450,15 +480,11 @@ void drawLeafIcon(int x, int y, uint16_t color) {
 
 void drawSoilBar(int x, int y, int w, int h, float percent) {
   tft.drawRect(x, y, w, h, ILI9341_WHITE);
-
   int fillW = (int)((percent / 100.0) * (w - 2));
   uint16_t fillColor = ILI9341_GREEN;
 
-  if (percent < 30) {
-    fillColor = ILI9341_RED;
-  } else if (percent < 60) {
-    fillColor = ILI9341_YELLOW;
-  }
+  if (percent < 30) fillColor = ILI9341_RED;
+  else if (percent < 60) fillColor = ILI9341_YELLOW;
 
   tft.fillRect(x + 1, y + 1, fillW, h - 2, fillColor);
 }
@@ -478,121 +504,14 @@ void showStartupScreen(const char* line1, const char* line2, uint16_t color) {
   tft.print(line2);
 }
 
-// =========================
-// Web Page HTML
-// =========================
 String getHTMLPage() {
-  String html = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta http-equiv="refresh" content="5">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ESP32 Weather Station</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-      background: #f4f6f8;
-      margin: 0;
-      padding: 20px;
-    }
-    .container {
-      max-width: 760px;
-      margin: auto;
-    }
-    .card {
-      background: white;
-      padding: 20px;
-      margin: 15px 0;
-      border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    h1 {
-      color: #222;
-    }
-    .value {
-      font-size: 2rem;
-      font-weight: bold;
-      margin-top: 10px;
-    }
-    .label {
-      font-size: 1rem;
-      color: #666;
-    }
-    .footer {
-      margin-top: 20px;
-      color: #777;
-      font-size: 0.9rem;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>ESP32 Weather Station</h1>
-
-    <div class="card">
-      <div class="label">Temperature</div>
-      <div class="value">)rawliteral";
-
-  html += String(temperature, 1) + " &deg;C";
-
-  html += R"rawliteral(</div>
-    </div>
-
-    <div class="card">
-      <div class="label">Humidity</div>
-      <div class="value">)rawliteral";
-
-  html += String(humidity, 1) + " %";
-
-  html += R"rawliteral(</div>
-    </div>
-
-    <div class="card">
-      <div class="label">Heat Index</div>
-      <div class="value">)rawliteral";
-
-  html += String(heatIndexC, 1) + " &deg;C";
-
-  html += R"rawliteral(</div>
-    </div>
-
-    <div class="card">
-      <div class="label">Pressure</div>
-      <div class="value">)rawliteral";
-
-  html += String(pressure_hPa, 1) + " hPa";
-
-  html += R"rawliteral(</div>
-    </div>
-
-    <div class="card">
-      <div class="label">Altitude</div>
-      <div class="value">)rawliteral";
-
-  html += String(altitudeM, 1) + " m";
-
-  html += R"rawliteral(</div>
-    </div>
-
-    <div class="card">
-      <div class="label">Soil Moisture</div>
-      <div class="value">)rawliteral";
-
-  html += String(soilPercent, 1) + " %";
-
-  html += R"rawliteral(</div>
-    </div>
-
-    <div class="footer">
-      Refreshes every 5 seconds
-    </div>
-  </div>
-</body>
-</html>
-)rawliteral";
-
+  String html = "<html><body><h1>ESP32 Weather Station</h1>";
+  html += "<p>Temperature: " + String(temperature, 1) + " C</p>";
+  html += "<p>Humidity: " + String(humidity, 1) + " %</p>";
+  html += "<p>Pressure: " + String(pressure_hPa, 1) + " hPa</p>";
+  html += "<p>Soil Moisture: " + String(soilPercent, 1) + " %</p>";
+  html += "<p>Heat Index: " + String(heatIndexC, 1) + " C</p>";
+  html += "<p>Altitude: " + String(altitudeM, 1) + " m</p>";
+  html += "</body></html>";
   return html;
 }
