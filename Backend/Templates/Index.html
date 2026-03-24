@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Station Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <meta http-equiv="refresh" content="5">
+</head>
+
+<script>
+async function loadHistory() {
+    const response = await fetch('/api/readings');
+    const data = await response.json();
+
+    const table = document.getElementById('history-table');
+    table.innerHTML = "";
+
+    data.forEach(item => {
+        const row = document.createElement('tr');
+
+        row.innerHTML = `
+            <td>${item.received_at || "-"}</td>
+            <td>${item.temperature}</td>
+            <td>${item.humidity}</td>
+            <td>${item.pressure}</td>
+            <td>${item.soil_moisture}</td>
+            <td>${item.heat_index}</td>
+            <td>${item.altitude}</td>
+        `;
+
+        table.appendChild(row);
+    });
+}
+
+// Load when page opens
+loadHistory();
+
+// Refresh every 5 seconds
+setInterval(loadHistory, 5000);
+</script>
+
+<body>
+    <div class="container">
+        <h1>Weather Station Dashboard</h1>
+
+        {% if latest %}
+            <div class="grid">
+                <div class="card">
+                    <h2>Device ID</h2>
+                    <p>{{ latest.device_id }}</p>
+                </div>
+
+                <div class="card">
+                    <h2>Temperature</h2>
+                    <p>{{ latest.temperature }} °C</p>
+                </div>
+
+                <div class="card">
+                    <h2>Humidity</h2>
+                    <p>{{ latest.humidity }} %</p>
+                </div>
+
+                <div class="card">
+                    <h2>Pressure</h2>
+                    <p>{{ latest.pressure }} hPa</p>
+                </div>
+
+                <div class="card">
+                    <h2>Soil Moisture</h2>
+                    <p>{{ latest.soil_moisture }} %</p>
+                </div>
+
+                <div class="card">
+                    <h2>Soil Raw</h2>
+                    <p>{{ latest.soil_raw }}</p>
+                </div>
+
+                <div class="card">
+                    <h2>Heat Index</h2>
+                    <p>{{ latest.heat_index }} °C</p>
+                </div>
+
+                <div class="card">
+                    <h2>Altitude</h2>
+                    <p>{{ latest.altitude }} m</p>
+                </div>
+
+                <div class="card wide">
+                    <h2>Timestamp</h2>
+                    <p>{{ latest.timestamp }}</p>
+                </div>
+
+                <div class="card wide">
+                    <h2>Received At</h2>
+                    <p>{{ latest.received_at }}</p>
+                </div>
+            </div>
+        {% else %}
+            <div class="card">
+                <p>No data found in the database yet.</p>
+            </div>
+        {% endif %}
+    </div>
+    <h2>Last 50 Readings</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Temp (°C)</th>
+                <th>Humidity (%)</th>
+                <th>Pressure (hPa)</th>
+                <th>Soil (%)</th>
+                <th>Heat Index (°C)</th>
+                <th>Altitude (m)</th>
+            </tr>
+        </thead>
+        <tbody id="history-table">
+        </tbody>
+    </table>
+</body>
+</html>
