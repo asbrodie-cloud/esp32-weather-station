@@ -2,7 +2,7 @@ MONGO_URI = "mongodb://localhost:27017/"
 DATABASE_NAME = "weather_station"
 COLLECTION_NAME = "readings"
 
-MQTT_BROKER = "localhost"
+MQTT_BROKER = "www.yanacreations.com"
 MQTT_PORT = 1883
 MQTT_TOPIC = "weatherstation/data"
 MQTT_CLIENT_ID = "flask-mongo-subscriber"

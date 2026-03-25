@@ -12,13 +12,13 @@
 // =========================
 // Wi-Fi Credentials
 // =========================
-const char* ssid = "MSI_25H";
-const char* password = "50A5DC8209FF";
+const char* ssid = "Note10";
+const char* password = "nmgi2784";
 
 // =========================
 // MQTT Settings
 // =========================
-const char* mqtt_server = "192.168.10.111";   // replace with your PC IP or broker IP
+const char* mqtt_server = "www.yanacreations.com";   // replace with your PC IP or broker IP
 const int mqtt_port = 1883;
 const char* mqtt_pub_topic = "weatherstation/data";
 const char* mqtt_sub_topic = "weatherstation/test";
