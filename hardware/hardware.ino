@@ -12,8 +12,8 @@
 // =========================
 // Wi-Fi Credentials
 // =========================
-const char* ssid = "Note10";
-const char* password = "nmgi2784";
+const char* ssid = "MSI_25H";
+const char* password = "50A5DC8209FF";
 
 // =========================
 // MQTT Settings
