@@ -23,6 +23,18 @@ const int mqtt_port = 1883;
 const char* mqtt_pub_topic = "weatherstation/data";
 const char* mqtt_sub_topic = "weatherstation/test";
 const char* device_id = "ESP32_01";
+const char* mqtt_cmd_topic = "weatherstation/control";
+
+
+// Manual control states
+bool acManual = false;
+bool acState = false;
+
+bool sprinklerManual = false;
+bool sprinklerState = false;
+
+bool dehumidifierManual = false;
+bool dehumidifierState = false;
 
 // =========================
 // Pin Definitions
@@ -243,6 +255,7 @@ bool reconnectMQTT() {
   if (mqttClient.connect(clientId.c_str())) {
     Serial.println("connected");
     mqttClient.subscribe(mqtt_sub_topic);
+    mqttClient.subscribe(mqtt_cmd_topic);
     Serial.print("Subscribed to: ");
     Serial.println(mqtt_sub_topic);
     mqttAvailable = true;
@@ -266,6 +279,49 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print(topic);
   Serial.print(": ");
   Serial.println(message);
+
+  if (String(topic) == mqtt_cmd_topic) {
+    StaticJsonDocument<256> doc;
+    DeserializationError error = deserializeJson(doc, message);
+
+    if (error) {
+      Serial.println("Failed to parse control JSON");
+      return;
+    }
+
+    String device = doc["device"] | "";
+    String mode = doc["mode"] | "";
+    bool state = doc["state"] | false;
+
+    if (device == "ac") {
+      if (mode == "auto") {
+        acManual = false;
+      } else if (mode == "manual") {
+        acManual = true;
+        acState = state;
+      }
+    }
+
+    if (device == "sprinkler") {
+      if (mode == "auto") {
+        sprinklerManual = false;
+      } else if (mode == "manual") {
+        sprinklerManual = true;
+        sprinklerState = state;
+      }
+    }
+
+    if (device == "dehumidifier") {
+      if (mode == "auto") {
+        dehumidifierManual = false;
+      } else if (mode == "manual") {
+        dehumidifierManual = true;
+        dehumidifierState = state;
+      }
+    }
+
+    Serial.println("Control state updated");
+  }
 }
 
 void publishSensorData() {
@@ -285,6 +341,12 @@ void publishSensorData() {
   doc["heat_index"] = heatIndexC;
   doc["altitude"] = altitudeM;
   doc["timestamp"] = millis();
+  doc["ac_state"] = acState;
+  doc["ac_manual"] = acManual;
+  doc["sprinkler_state"] = sprinklerState;
+  doc["sprinkler_manual"] = sprinklerManual;
+  doc["dehumidifier_state"] = dehumidifierState;
+  doc["dehumidifier_manual"] = dehumidifierManual;
 
   char buffer[256];
   serializeJson(doc, buffer);
@@ -358,6 +420,19 @@ void readSensors() {
 
   soilPercent = mapped;
   lastValidSoilPercent = soilPercent;
+
+    // Automatic logic if not in manual mode
+  if (!acManual) {
+    acState = (temperature >= 28.0);
+  }
+
+  if (!sprinklerManual) {
+    sprinklerState = (soilPercent <= 30.0);
+  }
+
+  if (!dehumidifierManual) {
+    dehumidifierState = (humidity >= 70.0);
+  }
 }
 
 // =========================
