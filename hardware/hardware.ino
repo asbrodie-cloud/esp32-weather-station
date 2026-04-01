@@ -423,7 +423,7 @@ void readSensors() {
 
     // Automatic logic if not in manual mode
   if (!acManual) {
-    acState = (temperature >= 28.0);
+    acState = (temperature >= 25.0);
   }
 
   if (!sprinklerManual) {
