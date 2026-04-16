@@ -42,7 +42,7 @@ export function useWeatherApi() {
 
   onMounted(() => {
     refresh()
-    timer = setInterval(refresh, 5000)
+    timer = setInterval(refresh, 2000)
   })
 
   onUnmounted(() => {

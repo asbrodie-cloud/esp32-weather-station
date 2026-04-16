@@ -4,7 +4,7 @@
       <v-col cols="12">
         <h1 class="text-h4 font-weight-bold">Automation View</h1>
         <div class="text-medium-emphasis">
-          Device animations and control state based on live sensor thresholds
+          Automatic and manual device control based on live sensor thresholds
         </div>
       </v-col>
     </v-row>
@@ -24,18 +24,20 @@
         <v-card rounded="xl" elevation="3" class="fill-height">
           <v-card-title class="d-flex justify-space-between align-center">
             <span>Air Conditioner</span>
-            <v-chip :color="acOn ? 'green' : 'grey'" variant="flat">
-              {{ acOn ? 'ON' : 'OFF' }}
+            <v-chip :color="acDisplayOn ? 'green' : 'grey'" variant="flat">
+              {{ acDisplayOn ? 'ON' : 'OFF' }}
             </v-chip>
           </v-card-title>
 
           <v-card-text class="text-center">
             <div class="device-stage">
               <div class="ac-unit">
-                <v-icon size="80" :class="{ 'fan-spin': acOn }">mdi-air-conditioner</v-icon>
+                <v-icon size="80" :class="{ 'fan-spin': acDisplayOn }">
+                  mdi-air-conditioner
+                </v-icon>
               </div>
 
-              <div class="air-stream" :class="{ active: acOn }">
+              <div class="air-stream" :class="{ active: acDisplayOn }">
                 <span></span><span></span><span></span>
               </div>
             </div>
@@ -43,8 +45,23 @@
             <div class="text-body-1 mt-4">
               Temperature: <strong>{{ latest?.temperature ?? '--' }} °C</strong>
             </div>
-            <div class="text-caption text-medium-emphasis">
-              AC turns on when temperature ≥ 25°C
+            <div class="text-caption text-medium-emphasis mb-4">
+              Auto turns on when temperature ≥ 25°C
+            </div>
+
+            <v-btn-toggle
+              :model-value="acMode"
+              mandatory
+              divided
+              class="mb-2"
+            >
+              <v-btn @click="setDeviceMode('ac', 'auto')">Auto</v-btn>
+              <v-btn @click="setDeviceMode('ac', 'on')">On</v-btn>
+              <v-btn @click="setDeviceMode('ac', 'off')">Off</v-btn>
+            </v-btn-toggle>
+
+            <div class="text-caption">
+              Mode: <strong>{{ acModeLabel }}</strong>
             </div>
           </v-card-text>
         </v-card>
@@ -55,8 +72,8 @@
         <v-card rounded="xl" elevation="3" class="fill-height">
           <v-card-title class="d-flex justify-space-between align-center">
             <span>Sprinklers</span>
-            <v-chip :color="sprinklerOn ? 'green' : 'grey'" variant="flat">
-              {{ sprinklerOn ? 'ON' : 'OFF' }}
+            <v-chip :color="sprinklerDisplayOn ? 'green' : 'grey'" variant="flat">
+              {{ sprinklerDisplayOn ? 'ON' : 'OFF' }}
             </v-chip>
           </v-card-title>
 
@@ -66,7 +83,7 @@
                 <v-icon size="72">mdi-sprinkler-variant</v-icon>
               </div>
 
-              <div class="water-spray" :class="{ active: sprinklerOn }">
+              <div class="water-spray" :class="{ active: sprinklerDisplayOn }">
                 <span></span><span></span><span></span><span></span><span></span>
               </div>
             </div>
@@ -74,8 +91,23 @@
             <div class="text-body-1 mt-4">
               Soil Moisture: <strong>{{ latest?.soil_moisture ?? '--' }} %</strong>
             </div>
-            <div class="text-caption text-medium-emphasis">
-              Sprinklers turn on when soil moisture ≤ 30%
+            <div class="text-caption text-medium-emphasis mb-4">
+              Auto turns on when soil moisture ≤ 30%
+            </div>
+
+            <v-btn-toggle
+              :model-value="sprinklerMode"
+              mandatory
+              divided
+              class="mb-2"
+            >
+              <v-btn @click="setDeviceMode('sprinkler', 'auto')">Auto</v-btn>
+              <v-btn @click="setDeviceMode('sprinkler', 'on')">On</v-btn>
+              <v-btn @click="setDeviceMode('sprinkler', 'off')">Off</v-btn>
+            </v-btn-toggle>
+
+            <div class="text-caption">
+              Mode: <strong>{{ sprinklerModeLabel }}</strong>
             </div>
           </v-card-text>
         </v-card>
@@ -86,8 +118,8 @@
         <v-card rounded="xl" elevation="3" class="fill-height">
           <v-card-title class="d-flex justify-space-between align-center">
             <span>Dehumidifier</span>
-            <v-chip :color="dehumidifierOn ? 'green' : 'grey'" variant="flat">
-              {{ dehumidifierOn ? 'ON' : 'OFF' }}
+            <v-chip :color="dehumidifierDisplayOn ? 'green' : 'grey'" variant="flat">
+              {{ dehumidifierDisplayOn ? 'ON' : 'OFF' }}
             </v-chip>
           </v-card-title>
 
@@ -97,7 +129,7 @@
                 <v-icon size="76">mdi-air-humidifier-off</v-icon>
               </div>
 
-              <div class="drop-capture" :class="{ active: dehumidifierOn }">
+              <div class="drop-capture" :class="{ active: dehumidifierDisplayOn }">
                 <span></span><span></span><span></span>
               </div>
             </div>
@@ -105,8 +137,23 @@
             <div class="text-body-1 mt-4">
               Humidity: <strong>{{ latest?.humidity ?? '--' }} %</strong>
             </div>
-            <div class="text-caption text-medium-emphasis">
-              Dehumidifier turns on when humidity ≥ 70%
+            <div class="text-caption text-medium-emphasis mb-4">
+              Auto turns on when humidity ≥ 70%
+            </div>
+
+            <v-btn-toggle
+              :model-value="dehumidifierMode"
+              mandatory
+              divided
+              class="mb-2"
+            >
+              <v-btn @click="setDeviceMode('dehumidifier', 'auto')">Auto</v-btn>
+              <v-btn @click="setDeviceMode('dehumidifier', 'on')">On</v-btn>
+              <v-btn @click="setDeviceMode('dehumidifier', 'off')">Off</v-btn>
+            </v-btn-toggle>
+
+            <div class="text-caption">
+              Mode: <strong>{{ dehumidifierModeLabel }}</strong>
             </div>
           </v-card-text>
         </v-card>
@@ -121,34 +168,34 @@
             <v-row>
               <v-col cols="12" md="4">
                 <v-progress-linear
-                  :model-value="acOn ? 100 : 0"
+                  :model-value="acDisplayOn ? 100 : 0"
                   height="20"
                   rounded
                   color="blue"
                 >
-                  <strong>AC {{ acOn ? 'ACTIVE' : 'IDLE' }}</strong>
+                  <strong>AC {{ acDisplayOn ? 'ACTIVE' : 'IDLE' }}</strong>
                 </v-progress-linear>
               </v-col>
 
               <v-col cols="12" md="4">
                 <v-progress-linear
-                  :model-value="sprinklerOn ? 100 : 0"
+                  :model-value="sprinklerDisplayOn ? 100 : 0"
                   height="20"
                   rounded
                   color="green"
                 >
-                  <strong>SPRINKLER {{ sprinklerOn ? 'ACTIVE' : 'IDLE' }}</strong>
+                  <strong>SPRINKLER {{ sprinklerDisplayOn ? 'ACTIVE' : 'IDLE' }}</strong>
                 </v-progress-linear>
               </v-col>
 
               <v-col cols="12" md="4">
                 <v-progress-linear
-                  :model-value="dehumidifierOn ? 100 : 0"
+                  :model-value="dehumidifierDisplayOn ? 100 : 0"
                   height="20"
                   rounded
                   color="deep-purple"
                 >
-                  <strong>DEHUMIDIFIER {{ dehumidifierOn ? 'ACTIVE' : 'IDLE' }}</strong>
+                  <strong>DEHUMIDIFIER {{ dehumidifierDisplayOn ? 'ACTIVE' : 'IDLE' }}</strong>
                 </v-progress-linear>
               </v-col>
             </v-row>
@@ -160,15 +207,99 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { useWeatherApi } from '../composables/useWeatherApi'
 
 const {
   latest,
   error,
+  refresh,
   acOn,
   sprinklerOn,
-  dehumidifierOn,
+  dehumidifierOn
 } = useWeatherApi()
+
+async function sendControl(device, mode, state) {
+  try {
+    const res = await fetch(`/api/control/${device}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ mode, state })
+    })
+
+    if (!res.ok) {
+      throw new Error('Failed to send control command')
+    }
+
+    // Refresh soon after sending
+    setTimeout(() => {
+      refresh()
+    }, 300)
+
+    // Refresh again a little later in case backend/db update lags
+    setTimeout(() => {
+      refresh()
+    }, 1200)
+
+  } catch (err) {
+    console.error(err)
+  }
+}
+
+function setDeviceMode(device, selection) {
+  if (selection === 'auto') {
+    sendControl(device, 'auto', false)
+  } else if (selection === 'on') {
+    sendControl(device, 'manual', true)
+  } else if (selection === 'off') {
+    sendControl(device, 'manual', false)
+  }
+}
+
+const acMode = computed(() => {
+  if (latest.value?.ac_manual === true) {
+    return latest.value?.ac_state ? 'on' : 'off'
+  }
+  return 'auto'
+})
+
+const sprinklerMode = computed(() => {
+  if (latest.value?.sprinkler_manual === true) {
+    return latest.value?.sprinkler_state ? 'on' : 'off'
+  }
+  return 'auto'
+})
+
+const dehumidifierMode = computed(() => {
+  if (latest.value?.dehumidifier_manual === true) {
+    return latest.value?.dehumidifier_state ? 'on' : 'off'
+  }
+  return 'auto'
+})
+
+const acDisplayOn = computed(() => !!latest.value?.ac_state)
+const sprinklerDisplayOn = computed(() => !!latest.value?.sprinkler_state)
+const dehumidifierDisplayOn = computed(() => !!latest.value?.dehumidifier_state)
+
+const acModeLabel = computed(() => {
+  if (acMode.value === 'auto') return 'Automatic'
+  if (acMode.value === 'on') return 'Manual ON'
+  return 'Manual OFF'
+})
+
+const sprinklerModeLabel = computed(() => {
+  if (sprinklerMode.value === 'auto') return 'Automatic'
+  if (sprinklerMode.value === 'on') return 'Manual ON'
+  return 'Manual OFF'
+})
+
+const dehumidifierModeLabel = computed(() => {
+  if (dehumidifierMode.value === 'auto') return 'Automatic'
+  if (dehumidifierMode.value === 'on') return 'Manual ON'
+  return 'Manual OFF'
+})
 </script>
 
 <style scoped>
@@ -214,6 +345,7 @@ const {
 .air-stream.active span:nth-child(2) {
   animation-delay: 0.15s;
 }
+
 .air-stream.active span:nth-child(3) {
   animation-delay: 0.3s;
 }
@@ -259,7 +391,7 @@ const {
   width: 10px;
   height: 18px;
   background: #7e57c2;
-  border-radius: 50% 50% 50% 50%;
+  border-radius: 50%;
   transform: rotate(45deg);
   animation: dropPulse 0.9s infinite ease-in-out;
 }

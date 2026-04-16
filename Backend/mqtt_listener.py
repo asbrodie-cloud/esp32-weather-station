@@ -6,6 +6,9 @@ from paho.mqtt import client as mqtt_client
 from config import MQTT_BROKER, MQTT_PORT, MQTT_TOPIC, MQTT_CLIENT_ID
 from mongo import collection
 
+CONTROL_TOPIC = "weatherstation/control"
+mqtt_pub_client = None
+
 
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
@@ -32,6 +35,12 @@ def on_message(client, userdata, msg):
             "soil_raw": data.get("soil_raw"),
             "heat_index": data.get("heat_index"),
             "altitude": data.get("altitude"),
+            "ac_state": data.get("ac_state"),
+            "ac_manual": data.get("ac_manual"),
+            "sprinkler_state": data.get("sprinkler_state"),
+            "sprinkler_manual": data.get("sprinkler_manual"),
+            "dehumidifier_state": data.get("dehumidifier_state"),
+            "dehumidifier_manual": data.get("dehumidifier_manual"),
             "timestamp": data.get("timestamp"),
             "received_at": datetime.utcnow()
         }
@@ -55,3 +64,26 @@ def start_mqtt_thread():
     thread = threading.Thread(target=start_mqtt_listener, daemon=True)
     thread.start()
     return thread
+
+
+def init_mqtt_publisher():
+    global mqtt_pub_client
+    mqtt_pub_client = mqtt_client.Client(client_id="flask-control-publisher")
+    mqtt_pub_client.connect(MQTT_BROKER, MQTT_PORT)
+    mqtt_pub_client.loop_start()
+
+
+def publish_control(device, mode, state):
+    global mqtt_pub_client
+
+    if mqtt_pub_client is None:
+        init_mqtt_publisher()
+
+    payload = json.dumps({
+        "device": device,
+        "mode": mode,
+        "state": state
+    })
+
+    mqtt_pub_client.publish(CONTROL_TOPIC, payload)
+    return payload

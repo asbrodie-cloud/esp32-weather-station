@@ -41,19 +41,21 @@ bool dehumidifierState = false;
 // =========================
 #define DHTPIN   4
 #define DHTTYPE  DHT22
-#define SOIL_PIN 34
+#define SOIL_PIN 32
 
 #define TFT_CS   5
-#define TFT_DC   27
-#define TFT_RST  33
+#define TFT_DC   17
+#define TFT_RST  16
 #define TFT_MOSI 23
 #define TFT_CLK  18
 #define TFT_MISO 19
-#define TFT_LED  32
+
 
 #define I2C_SDA  21
 #define I2C_SCL  22
-
+#define FAN_PIN 33
+#define SPRINKLER_LED 27
+#define DEHUMIDIFIER_LED 34
 // =========================
 // Objects
 // =========================
@@ -90,15 +92,20 @@ unsigned long lastSensorRead = 0;
 unsigned long lastMqttPublish = 0;
 
 const unsigned long readInterval = 3000;
-const unsigned long publishInterval = 5000;
+const unsigned long publishInterval = 2000;
 
 const int SOIL_DRY = 3200;
 const int SOIL_WET = 1100;
 const float SEA_LEVEL_HPA = 1013.25;
 
+bool wifiAvailable = false;
 bool mqttAvailable = false;
+
+unsigned long lastWiFiAttempt = 0;
+const unsigned long wifiRetryInterval = 10000;   // retry every 10 s
+
 unsigned long lastMqttReconnectAttempt = 0;
-const unsigned long mqttReconnectInterval = 5000; // try every 5 seconds
+const unsigned long mqttReconnectInterval = 5000; // retry every 5 s
 
 // =========================
 // Function Prototypes
@@ -129,8 +136,14 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  pinMode(TFT_LED, OUTPUT);
-  digitalWrite(TFT_LED, HIGH);
+  pinMode(SPRINKLER_LED, OUTPUT);
+  pinMode(DEHUMIDIFIER_LED, OUTPUT);
+
+  digitalWrite(SPRINKLER_LED, LOW);
+  digitalWrite(DEHUMIDIFIER_LED, LOW);
+
+  pinMode(FAN_PIN, OUTPUT);
+  digitalWrite(FAN_PIN, LOW);
 
   Wire.begin(I2C_SDA, I2C_SCL);
   dht.begin();
@@ -166,6 +179,7 @@ void setup() {
 
   mqttClient.setServer(mqtt_server, mqtt_port);
   mqttClient.setCallback(mqttCallback);
+  mqttClient.setBufferSize(512);
 
   setupWebServer();
 
@@ -177,16 +191,22 @@ void setup() {
 // Main Loop
 // =========================
 void loop() {
-  // Keep web server running
   server.handleClient();
 
-  // Keep Wi-Fi alive
+  // Try Wi-Fi in background
   if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi();
+    unsigned long now = millis();
+    if (now - lastWiFiAttempt >= wifiRetryInterval) {
+      lastWiFiAttempt = now;
+      connectWiFi();
+    }
+    wifiAvailable = false;
+  } else {
+    wifiAvailable = true;
   }
 
-  // MQTT should NOT block the rest of the system
-  if (WiFi.status() == WL_CONNECTED) {
+  // MQTT in background
+  if (wifiAvailable) {
     if (!mqttClient.connected()) {
       unsigned long now = millis();
       if (now - lastMqttReconnectAttempt >= mqttReconnectInterval) {
@@ -201,14 +221,14 @@ void loop() {
     mqttAvailable = false;
   }
 
-  // Sensor reading and TFT update must continue no matter what
+  // Always keep weather station working
   if (millis() - lastSensorRead >= readInterval) {
     lastSensorRead = millis();
     readSensors();
     drawDashboard();
   }
 
-  // Publish only if MQTT is available
+  // Only publish if MQTT is available
   if (mqttAvailable && millis() - lastMqttPublish >= publishInterval) {
     lastMqttPublish = millis();
     publishSensorData();
@@ -219,27 +239,26 @@ void loop() {
 // Wi-Fi
 // =========================
 void connectWiFi() {
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
+  static bool wifiStarted = false;
+  static bool startupShown = false;
 
-  showStartupScreen("Connecting Wi-Fi", "Please wait...", ILI9341_YELLOW);
+  if (!wifiStarted) {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
 
-  Serial.print("Connecting to Wi-Fi");
-  int attempts = 0;
+    if (!startupShown) {
+      showStartupScreen("Connecting Wi-Fi", "Please wait...", ILI9341_YELLOW);
+      startupShown = true;
+    }
 
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
+    Serial.println("Starting Wi-Fi connection...");
+    wifiStarted = true;
   }
-  Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("Wi-Fi connected");
-    Serial.print("IP Address: ");
-    Serial.println(WiFi.localIP());
+    wifiAvailable = true;
   } else {
-    Serial.println("Wi-Fi connection failed");
+    wifiAvailable = false;
   }
 }
 
@@ -321,17 +340,24 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     }
 
     Serial.println("Control state updated");
+    digitalWrite(FAN_PIN, acState ? HIGH : LOW);
+    digitalWrite(SPRINKLER_LED, sprinklerState ? HIGH : LOW);
+    digitalWrite(DEHUMIDIFIER_LED, dehumidifierState ? HIGH : LOW);
+    drawDashboard();
+    publishSensorData();
   }
 }
 
 void publishSensorData() {
   if (!mqttClient.connected()) {
     mqttAvailable = false;
+    Serial.println("MQTT not connected");
     return;
   }
 
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<384> doc;  // ⬅️ increased size
 
+  // SENSOR DATA
   doc["device_id"] = device_id;
   doc["temperature"] = temperature;
   doc["humidity"] = humidity;
@@ -341,26 +367,32 @@ void publishSensorData() {
   doc["heat_index"] = heatIndexC;
   doc["altitude"] = altitudeM;
   doc["timestamp"] = millis();
+
+  // 🔥 ADD CONTROL STATES HERE
   doc["ac_state"] = acState;
   doc["ac_manual"] = acManual;
+
   doc["sprinkler_state"] = sprinklerState;
   doc["sprinkler_manual"] = sprinklerManual;
+
   doc["dehumidifier_state"] = dehumidifierState;
   doc["dehumidifier_manual"] = dehumidifierManual;
 
-  char buffer[256];
+  // SERIALIZE
+  char buffer[384];
   serializeJson(doc, buffer);
+
+  Serial.print("Publishing: ");
+  Serial.println(buffer);
 
   if (mqttClient.publish(mqtt_pub_topic, buffer)) {
     Serial.println("MQTT publish successful");
-    Serial.println(buffer);
     mqttAvailable = true;
   } else {
     Serial.println("MQTT publish failed");
     mqttAvailable = false;
   }
 }
-
 // =========================
 // Web Server
 // =========================
@@ -433,6 +465,11 @@ void readSensors() {
   if (!dehumidifierManual) {
     dehumidifierState = (humidity >= 70.0);
   }
+
+  // Fan and Leds follows AC,Sprinkler,Dehumidifier state
+  digitalWrite(FAN_PIN, acState ? HIGH : LOW);
+  digitalWrite(SPRINKLER_LED, sprinklerState ? HIGH : LOW);
+  digitalWrite(DEHUMIDIFIER_LED, dehumidifierState ? HIGH : LOW);
 }
 
 // =========================
@@ -500,7 +537,7 @@ void drawStatusBar() {
   } else if (WiFi.status() == WL_CONNECTED && !mqttAvailable) {
     tft.print("WiFi OK | MQTT OFF");
   } else {
-    tft.print("Offline");
+    tft.print("Offline Mode");
   }
 }
 
